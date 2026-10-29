@@ -5,13 +5,12 @@
     <application
         android:allowBackup="false"
         android:label="Mini Course 3D"
-        android:theme="@android:style/Theme.Material.NoActionBar"
-        android:usesCleartextTraffic="false">
+        android:theme="@android:style/Theme.Material.NoActionBar">
 
         <activity
-            android:name=".MainActivity"
-            android:screenOrientation="landscape"
-            android:exported="true">
+            android:name="com.minicourse.game.MainActivity"
+            android:exported="true"
+            android:screenOrientation="landscape">
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
