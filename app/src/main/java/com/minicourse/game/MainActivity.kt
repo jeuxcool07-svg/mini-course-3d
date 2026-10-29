@@ -1,17 +1,16 @@
-
 package com.minicourse.game
 
 import android.app.Activity
-import android.os.Bundle
+import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
-import android.view.View
+import android.graphics.RectF
+import android.os.Bundle
+import android.os.SystemClock
 import android.view.MotionEvent
-import android.widget.FrameLayout
-import android.widget.Button
-import android.widget.LinearLayout
+import android.view.View
 import kotlin.math.max
 import kotlin.math.min
 
@@ -20,7 +19,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        game = RacingView()
+        game = RacingView(this)
         setContentView(game)
     }
 
@@ -35,15 +34,25 @@ class MainActivity : Activity() {
     }
 }
 
-class RacingView : View {
+class RacingView(context: Context) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val road = Path()
+    private val density = resources.displayMetrics.density
+
+    // Zones des boutons (calculées selon la taille de l'écran)
+    private val btnLeft = RectF()
+    private val btnRight = RectF()
+    private val btnGas = RectF()
+
+    private var pressLeft = false
+    private var pressRight = false
+    private var pressGas = false
+
     private var playerX = 0f
     private var speed = 0f
     private var distance = 0f
     private var steering = 0
     private var accelerating = false
-    private var paused = false
     private var lastTime = 0L
     private var running = false
 
@@ -53,22 +62,37 @@ class RacingView : View {
     private val white = Color.WHITE
     private val red = Color.rgb(240, 40, 45)
 
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        val bw = 110f * density
+        val bh = 60f * density
+        val m = 16f * density
+        val top = h - bh - m
+        val bottom = h - m
+        btnLeft.set(m, top, m + bw, bottom)
+        btnRight.set(m * 2f + bw, top, m * 2f + bw * 2f, bottom)
+        btnGas.set(w - m - bw * 1.4f, top, w - m, bottom)
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+
         val w = width.toFloat()
         val h = height.toFloat()
-        if (w <= 0 || h <= 0) return
+        if (w <= 0f || h <= 0f) return
 
+        // Ciel
         paint.color = sky
         canvas.drawRect(0f, 0f, w, h, paint)
 
         paint.color = Color.rgb(70, 170, 220)
         canvas.drawCircle(w * 0.8f, h * 0.14f, h * 0.05f, paint)
 
-        paint.color = grass
-        canvas.drawRect(0f, h * 0.36f, w, h, paint)
-
+        // Herbe (commence exactement à l'horizon)
         val horizon = h * 0.34f
+        paint.color = grass
+        canvas.drawRect(0f, horizon, w, h, paint)
+
         val topLeft = w * 0.47f
         val topRight = w * 0.53f
         val bottomLeft = w * 0.08f
@@ -80,20 +104,33 @@ class RacingView : View {
         road.lineTo(bottomRight, h)
         road.lineTo(bottomLeft, h)
         road.close()
+
         paint.color = asphalt
         canvas.drawPath(road, paint)
 
-        paint.color = Color.rgb(235, 235, 235)
+        // Bords de la route
+        paint.color = Color.LTGRAY
+        paint.strokeWidth = 3f * density
         canvas.drawLine(topLeft, horizon, bottomLeft, h, paint)
         canvas.drawLine(topRight, horizon, bottomRight, h, paint)
 
+        // Traits au milieu de la route (avec la bonne perspective)
+        val topWidth = topRight - topLeft
+        val fullWidth = bottomRight - bottomLeft
         for (i in 0..11) {
-            val t = ((i / 12f + distance * 0.015f) % 1f)
-            val y = horizon + (h - horizon) * t * t
-            val roadWidth = (bottomRight - bottomLeft) * t
+            val t = (i / 12f + distance * 0.015f) % 1f
+            val k = t * t
+            val y = horizon + (h - horizon) * k
+            val roadWidth = topWidth + (fullWidth - topWidth) * k
             val center = w / 2f
-            val lineHeight = max(2f, h * 0.008f * t)
-            paint.color = if (i % 2 == 0) white else Color.rgb(255, 210, 30)
+            val lineHeight = max(2f, h * 0.025f * k)
+
+            paint.color = if (i % 2 == 0) {
+                white
+            } else {
+                Color.rgb(255, 210, 30)
+            }
+
             canvas.drawRect(
                 center - roadWidth * 0.025f,
                 y,
@@ -103,74 +140,178 @@ class RacingView : View {
             )
         }
 
-        drawCar(canvas, w * (0.5f + playerX), h * 0.79f, w * 0.14f, h * 0.17f, red)
+        // Voiture
+        drawCar(
+            canvas,
+            w * (0.5f + playerX),
+            h * 0.79f,
+            w * 0.14f,
+            h * 0.17f,
+            red
+        )
 
+        // Tableau d'information
+        val pad = 12f * density
+        paint.textAlign = Paint.Align.LEFT
         paint.color = Color.argb(200, 0, 0, 0)
-        canvas.drawRoundRect(20f, 20f, 270f, 115f, 18f, 18f, paint)
-        paint.color = white
-        paint.textSize = 27f
-        canvas.drawText("MINI COURSE 3D", 35f, 55f, paint)
-        paint.textSize = 22f
-        canvas.drawText("Vitesse : ${speed.toInt()} km/h", 35f, 88f, paint)
+        canvas.drawRoundRect(
+            pad,
+            pad,
+            pad + 190f * density,
+            pad + 66f * density,
+            12f * density,
+            12f * density,
+            paint
+        )
 
-        drawButton(canvas, 90f, h - 100f, 150f, "◀")
-        drawButton(canvas, 250f, h - 100f, 150f, "▶")
-        drawButton(canvas, w - 200f, h - 100f, 160f, "GAZ")
+        paint.color = white
+        paint.textSize = 17f * density
+        canvas.drawText("MINI COURSE 3D", pad * 1.6f, pad + 26f * density, paint)
+
+        paint.textSize = 14f * density
+        canvas.drawText(
+            "Vitesse : ${speed.toInt()} km/h",
+            pad * 1.6f,
+            pad + 50f * density,
+            paint
+        )
+
+        // Boutons
+        drawButton(canvas, btnLeft, "GAUCHE", pressLeft)
+        drawButton(canvas, btnRight, "DROITE", pressRight)
+        drawButton(canvas, btnGas, "GAZ", pressGas)
     }
 
-    private fun drawCar(canvas: Canvas, cx: Float, cy: Float, cw: Float, ch: Float, color: Int) {
+    private fun drawCar(
+        canvas: Canvas,
+        cx: Float,
+        cy: Float,
+        cw: Float,
+        ch: Float,
+        color: Int
+    ) {
+        val radius = cw * 0.12f
+
         paint.color = Color.rgb(25, 25, 28)
-        canvas.drawRoundRect(cx - cw * 0.44f, cy - ch * 0.36f, cx + cw * 0.44f, cy + ch * 0.42f, 18f, 18f, paint)
+        canvas.drawRoundRect(
+            cx - cw * 0.44f,
+            cy - ch * 0.36f,
+            cx + cw * 0.44f,
+            cy + ch * 0.42f,
+            radius,
+            radius,
+            paint
+        )
+
         paint.color = color
-        canvas.drawRoundRect(cx - cw * 0.36f, cy - ch * 0.5f, cx + cw * 0.36f, cy + ch * 0.5f, 22f, 22f, paint)
+        canvas.drawRoundRect(
+            cx - cw * 0.36f,
+            cy - ch * 0.5f,
+            cx + cw * 0.36f,
+            cy + ch * 0.5f,
+            radius,
+            radius,
+            paint
+        )
+
         paint.color = Color.rgb(70, 180, 220)
-        canvas.drawRoundRect(cx - cw * 0.24f, cy - ch * 0.28f, cx + cw * 0.24f, cy - ch * 0.03f, 10f, 10f, paint)
+        canvas.drawRoundRect(
+            cx - cw * 0.24f,
+            cy - ch * 0.28f,
+            cx + cw * 0.24f,
+            cy - ch * 0.03f,
+            radius * 0.6f,
+            radius * 0.6f,
+            paint
+        )
+
         paint.color = Color.YELLOW
-        canvas.drawCircle(cx - cw * 0.23f, cy + ch * 0.4f, cw * 0.055f, paint)
-        canvas.drawCircle(cx + cw * 0.23f, cy + ch * 0.4f, cw * 0.055f, paint)
+        canvas.drawCircle(
+            cx - cw * 0.23f,
+            cy + ch * 0.4f,
+            cw * 0.055f,
+            paint
+        )
+        canvas.drawCircle(
+            cx + cw * 0.23f,
+            cy + ch * 0.4f,
+            cw * 0.055f,
+            paint
+        )
     }
 
-    private fun drawButton(canvas: Canvas, cx: Float, cy: Float, width: Float, text: String) {
-        paint.color = Color.argb(175, 0, 0, 0)
-        canvas.drawRoundRect(cx - width / 2f, cy - 40f, cx + width / 2f, cy + 40f, 20f, 20f, paint)
+    private fun drawButton(
+        canvas: Canvas,
+        r: RectF,
+        text: String,
+        pressed: Boolean
+    ) {
+        paint.color = if (pressed) {
+            Color.argb(220, 230, 60, 60)
+        } else {
+            Color.argb(175, 0, 0, 0)
+        }
+        canvas.drawRoundRect(r, 16f * density, 16f * density, paint)
+
         paint.color = white
-        paint.textSize = 30f
+        paint.textSize = 16f * density
         paint.textAlign = Paint.Align.CENTER
-        canvas.drawText(text, cx, cy + 10f, paint)
+        canvas.drawText(text, r.centerX(), r.centerY() + paint.textSize * 0.35f, paint)
         paint.textAlign = Paint.Align.LEFT
     }
 
-    override fun onTouchEvent(event: MotionEvent): Boolean {
-        val x = event.x
-        val y = event.y
-        val w = width.toFloat()
-        val h = height.toFloat()
+    private fun hit(r: RectF, x: Float, y: Float): Boolean {
+        val pad = 14f * density
+        return x >= r.left - pad && x <= r.right + pad &&
+            y >= r.top - pad && y <= r.bottom + pad
+    }
 
-        when (event.action) {
-            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
-                steering = 0
-                accelerating = false
-                if (y > h - 180f) {
-                    if (x < w * 0.25f) steering = -1
-                    else if (x < w * 0.48f) steering = 1
-                    else accelerating = true
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN,
+            MotionEvent.ACTION_POINTER_DOWN,
+            MotionEvent.ACTION_MOVE,
+            MotionEvent.ACTION_POINTER_UP,
+            MotionEvent.ACTION_UP,
+            MotionEvent.ACTION_CANCEL -> {
+                pressLeft = false
+                pressRight = false
+                pressGas = false
+
+                val ending = event.actionMasked == MotionEvent.ACTION_UP ||
+                    event.actionMasked == MotionEvent.ACTION_CANCEL
+                val lifted = if (event.actionMasked == MotionEvent.ACTION_POINTER_UP) {
+                    event.actionIndex
+                } else {
+                    -1
                 }
-                return true
-            }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                steering = 0
-                accelerating = false
+
+                if (!ending) {
+                    // On regarde tous les doigts : on peut tourner ET accélérer
+                    for (i in 0 until event.pointerCount) {
+                        if (i == lifted) continue
+                        val x = event.getX(i)
+                        val y = event.getY(i)
+                        if (hit(btnLeft, x, y)) pressLeft = true
+                        if (hit(btnRight, x, y)) pressRight = true
+                        if (hit(btnGas, x, y)) pressGas = true
+                    }
+                }
+
+                steering = (if (pressRight) 1 else 0) - (if (pressLeft) 1 else 0)
+                accelerating = pressGas
                 return true
             }
         }
+
         return true
     }
 
     fun startGame() {
+        if (running) return
         running = true
-        lastTime = System.currentTimeMillis()
-        postInvalidateOnAnimation()
-        post(updateRunnable)
+        lastTime = SystemClock.elapsedRealtime()
+        postOnAnimation(updateRunnable)
     }
 
     fun stopGame() {
@@ -181,18 +322,26 @@ class RacingView : View {
     private val updateRunnable = object : Runnable {
         override fun run() {
             if (!running) return
-            val now = System.currentTimeMillis()
+
+            val now = SystemClock.elapsedRealtime()
             val dt = min(0.05f, (now - lastTime) / 1000f)
             lastTime = now
 
-            if (accelerating) speed = min(220f, speed + 100f * dt)
-            else speed = max(0f, speed - 55f * dt)
+            if (accelerating) {
+                speed = min(220f, speed + 100f * dt)
+            } else {
+                speed = max(0f, speed - 55f * dt)
+            }
 
-            playerX = (playerX + steering * dt * speed / 150f).coerceIn(-0.38f, 0.38f)
+            // La voiture reste sur la route
+            playerX = (
+                playerX + steering * dt * speed / 150f
+            ).coerceIn(-0.24f, 0.24f)
+
             distance += speed * dt / 10f
 
             invalidate()
-            postDelayed(this, 16L)
+            postOnAnimation(this)
         }
     }
 }
